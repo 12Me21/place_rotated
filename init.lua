@@ -87,7 +87,7 @@ function after_place_node_orientable(node_pos,placer,_,pointed)
 end
 
 --test:
-minetest.register_node("test:test_slab",{
+minetest.register_node("sideways_slabs:test_slab",{
 	description="Test Slab",
 	drawtype="nodebox",
 	tiles={"default_cactus_top.png"},
