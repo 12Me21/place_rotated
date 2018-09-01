@@ -2,6 +2,10 @@ local function disp(x)
 	minetest.chat_send_all(dump(x))
 end
 
+local function tell(player,message)
+	minetest.chat_send_player(player:get_player_name(),message)
+end
+
 local function choose_log_facedir(normal)
 	local face=minetest.dir_to_facedir(normal,true)
 	local axis=({[8]=0,[4]=5,[0]=1,[2]=2,[1]=3,[3]=4})[face]
@@ -28,12 +32,21 @@ local function get_sector(x,y)
 	end
 end
 
+local function remove_normal(pos,normal)
+	for i in pairs(pos) do
+		if normal[i]~=0 then pos[i]=0 end
+	end
+end
+
 --calculate the facedir given the face and the clicked position
 local function choose_slab_facedir(normal,p)
 	if not(p and normal) then return 0 end
+	
+	remove_normal(p,normal) --ignore the "depth" of the point
+	
 	--if pointing at center of face:
 	--(size is (close to) sqrt(5)/10 (3.5777/16) so that all 5 sections have the same area)
-	if math.max(math.abs(p.x),math.abs(p.y),math.abs(p.z))<3.5/16 then
+	if math.max(math.abs(p.x),math.abs(p.y),math.abs(p.z))<3.5/16 then 
 		return choose_log_facedir(normal)
 	end
 	--
@@ -56,6 +69,8 @@ local function get_normal(pos,placed_on)
 	return vector.subtract(pos,placed_on)
 end
 
+--convert normal vector to box index
+-- x-, y-, z-, x+, y+, z+
 local function get_face(normal)
 	local face=minetest.dir_to_facedir(normal,true)
 	return ({[3]=1,[4]=2,[2]=3,[1]=4,[8]=5,[0]=6})[face]
@@ -63,13 +78,60 @@ end
 
 local wallmounted_to_facedir={[2]=0,[3]=2,[4]=3,[5]=1}
 
---input: node name + param2
+local function match(name,groups,query)
+	if query:sub(1,6)=="group:" then
+		local level=groups[query:sub(7)]
+		return level and level>0
+	end
+	return name==query
+end
+
+local function connects(connects_to,pos)
+	local node=minetest.get_node(pos)
+	local info=minetest.registered_nodes[node.name]
+	for _,query in ipairs(connects_to) do
+		if match(node.name,info.groups,query) then
+			return true
+		end
+	end
+end
+
+local function concat(array1,array2)
+	local length=#array1
+	for i,v in ipairs(array2) do
+		array1[length+i]=v
+	end
+end
+
+local connections={
+	{pos={x=-1,y=0 ,z=0 },name="left"  },
+	{pos={x=1 ,y=0 ,z=0 },name="right" },
+	{pos={x=0 ,y=-1,z=0 },name="bottom"},
+	{pos={x=0 ,y=1 ,z=0 },name="top"   },
+	{pos={x=0 ,y=0 ,z=-1},name="front" },
+	{pos={x=0 ,y=0 ,z=1 },name="back"  },
+}
+
+--convert all box list formats into standard form
+-- {x,y,z,x,y,z} -> {{x,y,z,x,y,z}}
+-- nil -> {}
+local function box_list(box_list)
+	if not box_list then return {} end
+	if type(box_list[1])=="number" then
+		box_list={box_list}
+	end
+	return box_list
+end
+
+--input: position
 --output: selection boxes, facedir
-local function get_boxes(node)
+local function get_boxes(pos)
+	local node=minetest.get_node(pos)
 	local name=node.name
-	local param2=0
 	local info=minetest.registered_nodes[name]
 	if not info then return {-0.5,-0.5,-0.5,0.5,0.5,0.5},0 end
+	
+	local param2=0
 	if info.paramtype2=="wallmounted" or info.paramtype2=="facedir" then
 		param2=node.param2
 	end
@@ -85,8 +147,18 @@ local function get_boxes(node)
 		else
 			return info.selection_box.wall_side or {7/16,-0.5,-0.5,0.5,0.5,0.5},wallmounted_to_facedir[param2] --try to convert wallmounted to facedir
 		end
-	elseif info.selection_box.type=="connected" then --TODO
-		return info.selection_box.fixed,0
+	elseif info.selection_box.type=="connected" then
+		local boxes=box_list(info.selection_box.fixed)
+		--IMPORTANT: update this when v0.5.0.0 comes out!
+		--adds `disconnected_` variants and `disconnected` and `disconnected_sides`
+		for _,connection in ipairs(connections) do
+			if connects(info.connects_to,vector.add(pos,connection.pos)) then
+				local new_boxes=info.selection_box["connect_"..connection.name]
+				concat(boxes,box_list(new_boxes))
+			end
+		end
+		disp(boxes)
+		return boxes,0
 	end
 end
 
@@ -101,18 +173,6 @@ local function adjust_rotation(box,facedir_rotation)
 	end
 	return new_box
 end
-
---[[
-   -     +
- x y z x y z ]]
--- local axis_table={
-	-- {1,2,3,4,5,6, 1}, --y+
-	-- {3,1,2,6,4,5, 1}, --z+
-	-- {6,4,5,3,1,2, -1}, --z-
-	-- {2,3,1,5,6,4, 1}, --x+
-	-- {5,6,4,2,3,1, -1}, --x-
-	-- {4,5,6,1,2,3, -1}, --y-
--- }
 
 --source points
 --value = where does [i] come from
@@ -149,41 +209,68 @@ local function intersect(pos, dir, origin, normal)
 	}
 end
 
---get the facedir given the position, the block it was placed onto, and the placer
+local function get_rotated_box(box,facedir)
+	box=adjust_rotation(box,facedir%4)
+	box=adjust_axis(box,math.floor(facedir/4))
+	return box
+end
+
+local function get_surface_depth(box,face)
+	local mul=1
+	if face<=3 then
+		mul=-1
+	end
+	return mul*box[face]
+end
+
+local function inside_box(box,point)
+	return point.x>=box[1] and point.x<=box[4] and point.y>=box[2] and point.y<=box[5] and point.z>=box[3] and point.z<=box[6]
+end
+
+--This is the most important function
+--It returns the exact location the player is pointing at,
+--given the position of the node, the node it was placed onto, and the player
 local function get_point(pos,placed_on,placer)
 	local placer_pos=placer:get_pos()
-	placer_pos.y=placer_pos.y+1.625
-	
+	placer_pos.y=placer_pos.y+(placer:get_properties().eye_height or 1.625)
 	local normal=get_normal(pos,placed_on)
-	if vector.length(normal)~=1 then
-		disp("error: large selection box?")
+	if vector.length(normal)~=1 then --unfixable :(
+		tell(placer,"error: large selection box?")
 		return normal
 	end
-	
+	local look=placer:get_look_dir()
 	local face=get_face(normal)
-	local boxes,facedir=get_boxes(minetest.get_node(placed_on))
-	disp(boxes)
-	disp(math.floor(facedir/4))
-	disp(facedir%4)
+	local boxes,facedir=get_boxes(placed_on)
 	--if there's a list with just 1 box
 	if #boxes==1 then boxes=boxes[1] end
 	--single box
 	if type(boxes[1])=="number" then
-		local box=adjust_rotation(boxes,facedir%4)
-		disp(box)
-		box=adjust_axis(box,math.floor(facedir/4))
-		disp(box)
-		local mul=1
-		if face<=3 then
-			mul=-1
-		end
-		local surface=vector.add(placed_on,vector.multiply(normal,mul*box[face]))
-		local p=intersect(placer_pos,placer:get_look_dir(),surface,normal)
-		p=vector.subtract(p,surface)
+		local surface=vector.add(placed_on,vector.multiply(normal,
+			get_surface_depth(get_rotated_box(boxes,facedir),face)
+		))
+		local p=intersect(placer_pos,look,surface,normal)
+		p=vector.subtract(p,placed_on) -- or p-surface instead...
 		return normal,p
 	--multiple boxes (aaaa)
 	else
-		disp("error: multiple selection boxes not supported")
+		local best=math.huge
+		local best_p
+		for _,box in ipairs(boxes) do
+			box=get_rotated_box(box,facedir)
+			--this can be simplified:
+			local surface=vector.add(placed_on,vector.multiply(normal,get_surface_depth(box,face)))
+			local p=intersect(placer_pos,look,surface,normal)
+			p=vector.subtract(p,placed_on)
+			if inside_box(box,p) then
+				local dist=vector.distance(p,placer_pos)
+				if dist<best then
+					best=dist
+					best_p=p
+				end
+			end
+		end
+		return normal,best_p
+		--tell(placer,"error: multiple selection boxes not supported")
 	end
 	return normal
 end
@@ -204,34 +291,11 @@ place_rotated={
 		return minetest.item_place(itemstack,placer,pointed,
 			choose_log_facedir(get_normal(pointed.above,pointed.under))
 		)
-	end
+	end,
+	--allow other things to use these I guess
+	get_point=get_point, 
+	choose_log_facedir=choose_log_facedir,
+	choose_slab_facedir=choose_slab_facedir,
 }
 
---test:
-minetest.register_node("place_rotated:test_slab",{
-	description="Test Slab",
-	drawtype="nodebox",
-	tiles={"test_brick.png"},
-	paramtype="light",
-	paramtype2="facedir",
-	node_box={
-		type="fixed",
-		fixed={-0.5,-0.5,-0.5,0.5,0,0.5},
-	},
-	groups={dig_immediate=3},
-	on_place=place_rotated.slab
-})
-
-minetest.register_node("place_rotated:test_tree",{
-	description="Test Tree",
-	tiles={"test_log.png","test_log.png","test_bark.png"},
-	paramtype2="facedir",
-	groups={dig_immediate=3},
-	on_place=place_rotated.log
-})
-
-minetest.register_node("place_rotated:test_diagram",{
-	description="Test Diagram",
-	tiles={"test_diagram.png"},
-	groups={dig_immediate=3},
-})
+dofile(minetest.get_modpath("place_rotated").."/items.lua")
