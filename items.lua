@@ -75,8 +75,7 @@ minetest.register_craftitem("place_rotated:level",{
 		local user_name=placer:get_player_name()
 		local normal,p = place_rotated.get_point(pointed_thing.above,pointed_thing.under,placer)
 		if p then
-			minetest.chat_send_player(user_name,"Surface: ")
-			minetest.chat_send_player(user_name,"Position on surface:")
+			minetest.chat_send_player(user_name,"Position within node:")
 			minetest.chat_send_player(user_name,"X: "..p.x)
 			minetest.chat_send_player(user_name,"Y: "..p.y)
 			minetest.chat_send_player(user_name,"Z: "..p.z)
