@@ -195,22 +195,17 @@ end
 place_rotated={
 	--on_place function for "slab-like" blocks
 	slab=function(itemstack,placer,pointed,_)
-		minetest.item_place(itemstack,placer,pointed,
+		return minetest.item_place(itemstack,placer,pointed,
 			choose_slab_facedir(get_point(pointed.above,pointed.under,placer))
 		)
 	end,
 	--on_place function for "log-like" blocks
 	log=function(itemstack,placer,pointed,_)
-		minetest.item_place(itemstack,placer,pointed,
+		return minetest.item_place(itemstack,placer,pointed,
 			choose_log_facedir(get_normal(pointed.above,pointed.under))
 		)
 	end
 }
-
-
-
-
-
 
 --test:
 minetest.register_node("place_rotated:test_slab",{
