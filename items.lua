@@ -28,23 +28,6 @@ minetest.register_node("place_rotated:test_diagram",{
 	groups={dig_immediate=3},
 })
 
-minetest.register_node("place_rotated:test_fence",{
-	description="Test Fence",
-	drawtype="nodebox",
-	paramtype="light",
-	paramtype2="facedir",
-	node_box={
-		type="connected",
-		fixed={-1/16,-0.5,-1/16,1/16,0.5,1/16},
-		connect_left={-4/16,-1/16,-1/16,1/16,1/16,1/16},
-		connect_back={-4/16,-1/16,-4/16,1/16,1/16,1/16},
-		disconnected_left={-1/16,-1/16,-4/16,1/16,1/16,1/16}, --upcoming feature!
-	},
-	connects_to={"place_rotated:test_fence"},
-})
-
-connects_to = 
-
 --level + ruler
 minetest.register_craftitem("place_rotated:level",{
 	description="Level (left click = check rotation, right click = get point)",

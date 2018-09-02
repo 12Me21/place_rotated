@@ -86,12 +86,29 @@ local function match(name,groups,query)
 	return name==query
 end
 
-local function connects(connects_to,pos)
+local function connects(connects_to,pos,opposite)
 	local node=minetest.get_node(pos)
 	local info=minetest.registered_nodes[node.name]
-	for _,query in ipairs(connects_to) do
-		if match(node.name,info.groups,query) then
-			return true
+	if info then
+		if info.connect_sides then
+			local found
+			for _,side in ipairs(info.connect_sides) do
+				if side==opposite then
+					found=true
+					--I REALLY want to use goto here but I'm pretty sure this version of Lua doesn't have it
+					--goto @found
+					break
+				end
+			end
+			if not found then return false end
+			--return false
+			--@found
+		end
+		
+		for _,query in ipairs(connects_to) do
+			if match(node.name,info.groups,query) then
+				return true
+			end
 		end
 	end
 end
@@ -104,12 +121,12 @@ local function concat(array1,array2)
 end
 
 local connections={
-	{pos={x=-1,y=0 ,z=0 },name="left"  },
-	{pos={x=1 ,y=0 ,z=0 },name="right" },
-	{pos={x=0 ,y=-1,z=0 },name="bottom"},
-	{pos={x=0 ,y=1 ,z=0 },name="top"   },
-	{pos={x=0 ,y=0 ,z=-1},name="front" },
-	{pos={x=0 ,y=0 ,z=1 },name="back"  },
+	{pos={x=-1,y=0 ,z=0 },name="left"  ,opposite="right" },
+	{pos={x=1 ,y=0 ,z=0 },name="right" ,opposite="left"  },
+	{pos={x=0 ,y=-1,z=0 },name="bottom",opposite="top"   },
+	{pos={x=0 ,y=1 ,z=0 },name="top"   ,opposite="bottom"},
+	{pos={x=0 ,y=0 ,z=-1},name="front" ,opposite="back"  },
+	{pos={x=0 ,y=0 ,z=1 },name="back"  ,opposite="front" },
 }
 
 --convert all box list formats into standard form
@@ -152,7 +169,7 @@ local function get_boxes(pos)
 		--IMPORTANT: update this when v0.5.0.0 comes out!
 		--adds `disconnected_` variants and `disconnected` and `disconnected_sides`
 		for _,connection in ipairs(connections) do
-			if connects(info.connects_to,vector.add(pos,connection.pos)) then
+			if connects(info.connects_to,vector.add(pos,connection.pos),connection.opposite) then
 				local new_boxes=info.selection_box["connect_"..connection.name]
 				concat(boxes,box_list(new_boxes))
 			end
@@ -255,7 +272,7 @@ local function get_point(pos,placed_on,placer)
 	else
 		local best=math.huge
 		local best_p
-		for _,box in ipairs(boxes) do
+		for i,box in ipairs(boxes) do
 			box=get_rotated_box(box,facedir)
 			--this can be simplified:
 			local surface=vector.add(placed_on,vector.multiply(normal,get_surface_depth(box,face)))
@@ -267,16 +284,14 @@ local function get_point(pos,placed_on,placer)
 					best=dist
 					best_p=p
 				end
+			elseif not best_p then
+				--
 			end
 		end
 		return normal,best_p
 		--tell(placer,"error: multiple selection boxes not supported")
 	end
 	return normal
-end
-
-local function between(value,min,max)
-	return value>=min and value<=max
 end
 
 place_rotated={
@@ -296,6 +311,9 @@ place_rotated={
 	get_point=get_point, 
 	choose_log_facedir=choose_log_facedir,
 	choose_slab_facedir=choose_slab_facedir,
+	connects=connects,
+	connections=connections,
 }
 
 dofile(minetest.get_modpath("place_rotated").."/items.lua")
+dofile(minetest.get_modpath("place_rotated").."/wires.lua")
